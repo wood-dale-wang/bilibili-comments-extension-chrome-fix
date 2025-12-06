@@ -606,7 +606,7 @@ function initCrawler() {
         }
     }
 
-    // 生成CSV并下载 - 修复中文乱码问题
+    // 生成CSV并通过后台下载（避免页面下载限制），并在 UI 显示状态
     function downloadCSV() {
         if (comments.length === 0) {
             addLog('没有评论数据可下载', 'error');
@@ -614,6 +614,8 @@ function initCrawler() {
         }
 
         addLog('开始生成CSV文件...');
+        crawlerStatus.textContent = '生成CSV中...';
+        downloadBtn.disabled = true;
 
         try {
             const headers = ['序号', '上级评论ID', '评论ID', '用户ID', '用户名', '用户等级', '性别', '评论内容', '评论时间', '回复数', '点赞数', '个性签名', 'IP属地', '是否是大会员', '头像'];
@@ -645,24 +647,37 @@ function initCrawler() {
                 });
             }
 
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-
             const safeTitle = (title || 'B站评论').replace(/[\/\\:*?"<>|]/g, '_').substring(0, 50);
-            a.download = `${safeTitle}_评论.csv`;
+            const filename = `${safeTitle}_评论.csv`;
 
-            document.body.appendChild(a);
-            a.click();
+            // 发送到后台处理下载；后台会用 Blob + chrome.downloads.download
+            chrome.runtime.sendMessage({ action: 'downloadCSV', csvContent, filename }, (response) => {
+                if (chrome.runtime.lastError) {
+                    addLog(`请求后台下载失败: ${chrome.runtime.lastError.message}`, 'error');
+                    crawlerStatus.textContent = '就绪';
+                    downloadBtn.disabled = false;
+                    return;
+                }
 
-            setTimeout(() => {
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                addLog(`CSV文件已开始下载: ${a.download}`);
-            }, 100);
+                if (response && response.success) {
+                    addLog(`后台下载已开始: ${filename}`);
+                    crawlerStatus.textContent = '下载中...';
+                    // 等待短暂时间后恢复状态（后台会在下载开始后回收对象 URL）
+                    setTimeout(() => {
+                        crawlerStatus.textContent = '就绪';
+                        downloadBtn.disabled = false;
+                        addLog('下载请求已发送到后台');
+                    }, 1500);
+                } else {
+                    addLog(`后台下载失败: ${response && response.error ? response.error : '未知错误'}`, 'error');
+                    crawlerStatus.textContent = '错误';
+                    downloadBtn.disabled = false;
+                }
+            });
         } catch (error) {
             addLog(`生成CSV失败: ${error.message}`, 'error');
+            crawlerStatus.textContent = '错误';
+            downloadBtn.disabled = false;
         }
     }
 
